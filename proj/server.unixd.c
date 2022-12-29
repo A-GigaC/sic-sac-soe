@@ -25,7 +25,9 @@ do { perror(msg); exit(EXIT_FAILURE); } while (0)
 int not_in(int elem, int *array);
 
 int accept_connections(int sfd);
-int reg_cfd(int cfd, int* all_descs, int len);
+int reg_cfd(int cfd, int * all_descs, int len);
+
+void close_server(int sfd, int * all_dedscs); 
 
 typedef struct game_session {
     int fp;
@@ -55,8 +57,6 @@ int main() {
         handle_error("listen");
     
     accept_connections(sfd);
-    unlink(PATH);
-    close(sfd);
 
     return 0;
 }
@@ -81,6 +81,8 @@ int accept_connections(int sfd) {
         FD_ZERO(&rfdset);
         FD_SET(sfd, &rfdset);
 
+        FD_SET(STDIN_FILENO, &rfdset);
+
         int maxfd = sfd;
 
         for (int i = 0; i < MAX_CONNECTIONS; ++i) {
@@ -92,6 +94,14 @@ int accept_connections(int sfd) {
         int events = select(maxfd+1, &rfdset, NULL, NULL, NULL);
         if (events == -1) { perror("select()"); }
 
+        /* console interaction handling */
+        if (FD_ISSET(STDIN_FILENO, &rfdset)) {
+            read(STDIN_FILENO, &inpbuf, 1);
+            if (inpbuf[0] == 'q') { 
+                close_server(sfd, &all_descs);
+                return 1;
+            }
+        }
         /* accept new connection */
         if (FD_ISSET(sfd, &rfdset)) {
             
@@ -137,6 +147,8 @@ int accept_connections(int sfd) {
                             }
                         else { 
                             session.sp = p;
+                            sprintf(&outbuf, "you are secondplayer\n");
+                            write(p, &outbuf, 21);
                             session.status = 1;
                             draw(session, sessions);
                             sessions[k] = session;
@@ -163,23 +175,26 @@ int accept_connections(int sfd) {
                         // quit from game
                         if (c == 'q') {
                             if (session.status == 1) {
-                                sprintf(outbuf, "\n\tDraw\n");
-                                write(session.fp, &outbuf,8);
-                                write(session.sp, &outbuf, 8); 
+                                sprintf(outbuf, "\nDraw\n");
+                                write(session.fp, &outbuf,6);
+                                write(session.sp, &outbuf, 6); 
                                 session.status = 111;
                             } else {
-                                sprintf(outbuf, "\n%d player wins\n", session.turn);
-                                write(session.fp, &outbuf, 17);
-                                write(session.sp, &outbuf, 17);
+                                sprintf(outbuf, "\nthe %d player gave up\n", number_in_session);
+                                write(session.fp, &outbuf, 24);
+                                write(session.sp, &outbuf, 24);
                                 session.status = number_in_session > 1 ? 110 : 101;
                                 printf("%d\n", session.status);
                             }
+                            sessions[pi] = session;
+                            continue;
                         }
                         /* if user, that make input, is current */ 
                         if (number_in_session == session.turn) {
-                            session.turn++;
 
                             if (c >= '1' && c <= '9') {
+                                session.turn = session.status % 2 + 1;
+
                                 int nc = c - '1';
                                 int line = nc / 3;
                                 int column = nc % 3;
@@ -187,8 +202,8 @@ int accept_connections(int sfd) {
                                     session.field_statement[line][column] = session.status % 2 != 0 ? CROSS : ZERO;
 
                                     sprintf(outbuf, "step %d\n", session.status + 1);
-                                    write(session.fp, &outbuf, 20);
-                                    write(session.sp, &outbuf, 20);
+                                    write(session.fp, &outbuf, 8);
+                                    write(session.sp, &outbuf, 8);
                                     draw(session, sessions);
                                     session.status++;                        
                                 } else {
@@ -205,11 +220,15 @@ int accept_connections(int sfd) {
                                     session.status = 101;
                                 } else if (winner == 2) {
                                     sprintf(outbuf, "\n2nd player wins\n");
-                                    write(session.fp, &outbuf, 20);
-                                    write(session.sp, &outbuf, 20); 
+                                    write(session.fp, &outbuf, 18);
+                                    write(session.sp, &outbuf, 19); 
 
                                     session.status = 110;
                                 }
+
+                            } else {
+                                sprintf(outbuf, "incorrect input\n");
+                                write(p, &outbuf, 16);
                             }
                         }
                         sessions[pi] = session;
@@ -220,6 +239,11 @@ int accept_connections(int sfd) {
     }
 }
 
+void close_server(int sfd, int * all_descs) {
+    for (int i = 0; i < MAX_CONNECTIONS; i ++) { close(all_descs[i]); }
+    close(sfd);
+    unlink(PATH);
+}
 
 void create_session (int p, struct game_session session, struct game_session * sessions) {
     session.fp = p;
